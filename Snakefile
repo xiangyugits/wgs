@@ -6,11 +6,13 @@ include: "rules/common.smk"
 
 rule all:
     input:
-        #get_sample_bams
-        "annotated/all.vcf.gz",
+        expand("recal/{sample}-{unit}.bam",sample=units.loc[:,'sample'],unit=units.unit.drop_duplicates()),
+
+        #"annotated/all.vcf.gz",
         #"qc/multiqc.html",
         #"plots/depths.svg",
         #"plots/allele-freqs.svg",
+
 
 
 ##### Modules #####

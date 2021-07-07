@@ -53,7 +53,7 @@ rule mark_duplicates:
     input:
         "mapped/{sample}-{unit}.sorted.bam",
     output:
-        bam=temp("dedup/{sample}-{unit}.bam"),
+        bam="dedup/{sample}-{unit}.bam",
         metrics="qc/dedup/{sample}-{unit}.metrics.txt",
     log:
         "logs/picard/dedup/{sample}-{unit}.log",
@@ -62,8 +62,10 @@ rule mark_duplicates:
     wrapper:
         "0.60.7/bio/picard/markduplicates"
 
-
-rule recalibrate_base_qualities:
+#检测碱基质量分数中的系统错误（测序仪器）
+#仅根据已有snp数据库建立模型，产生重校准表，根据模型调整非已知SNP区域。
+#如无已知snp数据库，可以建立严格SNP筛选过程，建立一个snp数据库。
+rule gatk_baserecalibrator:
     input:
         bam=get_recal_input(),
         bai=get_recal_input(bai=True),
@@ -72,13 +74,51 @@ rule recalibrate_base_qualities:
         known="resources/variation.noiupac.vcf.gz",
         tbi="resources/variation.noiupac.vcf.gz.tbi",
     output:
-        bam=protected("recal/{sample}-{unit}.bam"),
+        recal_table="recal/{sample}-{unit}.grp",
     params:
         extra=get_regions_param() + config["params"]["gatk"]["BaseRecalibrator"],
     log:
-        "logs/gatk/bqsr/{sample}-{unit}.log",
+        "logs/gatk/baserecalibrator/{sample}-{unit}.log",
+    resources:
+        mem_mb=1024
     wrapper:
-        "0.57.0/bio/gatk/baserecalibrator"
+        "0.77.0/bio/gatk/baserecalibrator"
+
+#根据已建立的模型对碱基质量进行校正
+rule gatk_applybqsr:
+    input:
+        bam=get_recal_input(),
+        ref="resources/genome.fasta",
+        dict="resources/genome.dict",
+        recal_table="recal/{sample}-{unit}.grp",
+    output:
+        bam=protected("recal/{sample}-{unit}.bam"),
+    log:
+        "logs/gatk/gatk_applybqsr/{sample}-{unit}.log",
+    params:
+        extra=""
+    resources:
+        mem_mb=1024
+    wrapper:
+        "0.60.7/bio/gatk/applybqsr"
+
+
+# rule recalibrate_base_qualities:
+#     input:
+#         bam=get_recal_input(),
+#         bai=get_recal_input(bai=True),
+#         ref="resources/genome.fasta",
+#         idx="resources/genome.dict",
+#         #known="resources/variation.noiupac.vcf.gz",
+#         #tbi="resources/variation.noiupac.vcf.gz.tbi",
+#     output:
+#         bam=protected("recal/{sample}-{unit}.bam"),
+#     params:
+#         extra=get_regions_param() + config["params"]["gatk"]["BaseRecalibrator"],
+#     log:
+#         "logs/gatk/bqsr/{sample}-{unit}.log",
+#     wrapper:
+#         "0.60.7/bio/gatk/baserecalibrator"
 
 
 rule samtools_index:

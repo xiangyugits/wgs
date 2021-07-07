@@ -1,4 +1,4 @@
-SAMPLES, = glob_wildcards('/path/to/BAMs/{sample}_merged_markDupl_BQSR.bam')
+SAMPLES = glob_wildcards('recal/{sample}.bam')
 CHRN = list(range(1, 22))
 CHRN.append('X','Y')
 CHR = CHRN
@@ -12,6 +12,9 @@ rule all:
         expand('chr{j}_{sample}_segments_cohort.vcf.gz', j=CHR, sample=SAMPLES)
 
 
+# 对bins进行前期处理以用来计算reads coverage，
+# 首先检查输入的interval是否有overlap，有则合并；然后根据指定参数扩充interval，分成bins,按指定bin长切割bins，最后过滤掉都是N的bins
+#对WGS数据分析，需要使用窗口分割（--bin-length）
 rule make_intervals:
     input:
         REF="resources/genome.fasta",
@@ -30,6 +33,7 @@ rule make_intervals:
         -O {output}
         '''
 
+#注释每个目标区段，GC、mappability等信息
 rule annotate:
     input:
         ref = "resources/genome.fasta",
@@ -50,6 +54,7 @@ rule annotate:
         -O {output}
         '''
 
+#计算指定的intervals的reads数，即计算起始位点落入intervals的reads数。
 rule count_reads:
     input:
         ref = "resources/genome.fasta",
@@ -66,6 +71,9 @@ rule count_reads:
         -I {input.bam} \
         -O {output}
         '''
+
+#对AnnotateIntervals生成的带注释的intervals和/或CollectReadCounts输出的reads计数信息(sample*.counts.hdf5)，
+#指定过滤区域，输出一个过滤后的Picard intervals列表。
 rule filter_intervals:
     input:
         interval = 'resources/interval_chr{j}.interval_list',
@@ -85,15 +93,16 @@ rule filter_intervals:
         -O {output}
         '''
 
-
+#给定CollectReadCounts生成的HDF5或TSV计数文件，确定种系样品的染色体倍数。
 #This step is needed to generate global baseline coverage and noise data for the subsequent steps:
+#使用reads count进行种系核型分析需要校准（“建模”）各染色体的coverage bias和variantion。
 rule determine_ploidy:
     input:
         interval = 'cnv/gcfiltered_chr{j}.interval_list',
         samples = expand('cnv/{sample}_{chromosome}.hdf5', sample=SAMPLES, chromosome='chr{j}'),
         prior = 'ploidy_priors.tsv',
     params:
-        prefix = 'dogs',#!!!!!!!!!!!!#
+        prefix = 'prefix',#!!!!!!!!!!!!#
         files = lambda wildcards, input: ' -I '.join(input.samples)
     output:
         'ploidy-calls_chr{j}'
@@ -125,6 +134,8 @@ rule scattering:
         --OUTPUT {params}
         '''
 
+# 根据样本的CollectReadsCounts生成的reads count计数HDF5/TSV文件和DetermineGermlineContigPloidy的相应输出，在种系样品中检测拷贝数变异。
+# 建议使用此工具时将intervals文件切割成几个子集，以免内存溢出。
 rule cnvcall:
     input:
         interval = 'cnv/scatter_chr{j}/{fragment}/scattered.interval_list',
@@ -155,6 +166,8 @@ def sampleindex(sample):
     index = SAMPLES.index(sample)
     return index
 
+#处理GermlineCNVCaller的输出并生成相应的VCF文件。
+#此工具生成“intervals”和“segments”VCF文件，用于补充上一步GermlineCNVCaller的信息。
 rule process_cnvcalls:
     input:
         model = dynamic("cohort-calls_chr{j}/frag_{fragment}-model"),
